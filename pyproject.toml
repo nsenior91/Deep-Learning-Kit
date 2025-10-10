@@ -1,0 +1,91 @@
+[project]
+name = "eqx-zoo"
+version = "0.3.6"
+description = "Verified Equinox ports of pretrained models, numerically matched against Hugging Face"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Zane", email = "nsenior@live.com" }]
+requires-python = ">=3.12"
+keywords = ["jax", "equinox", "llm", "transformers", "pretrained-models", "deep-learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "equinox>=0.12",
+    "huggingface-hub>=0.30",
+    "jax>=0.5",
+    "jaxtyping>=0.3",
+    "safetensors>=0.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/nsenior91/Deep-Learning-Kit"
+Repository = "https://github.com/nsenior91/Deep-Learning-Kit"
+Issues = "https://github.com/nsenior91/Deep-Learning-Kit/issues"
+
+[project.optional-dependencies]
+# NVIDIA GPU support on Linux (including WSL2); a no-op elsewhere, since JAX supports only the
+# CPU on macOS and native Windows.
+cuda = ["jax[cuda13]; sys_platform == 'linux'"]
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+    "sentence-transformers>=3",
+    "torch>=2.14.0",
+    "transformers>=4.51.3",
+]
+
+[tool.uv]
+# The uv version CI and local development use, matching the build backend's requirement.
+# setup-uv reads this, so CI resolves exactly as local development does.
+required-version = ">=0.12.10,<0.13"
+constraint-dependencies = [
+    # Released transformers versions require huggingface-hub < 2. This only affects our
+    # lockfile; it is not part of the published package metadata. A minimal-install CI job
+    # tests the published package with huggingface-hub 2.x.
+    "huggingface-hub<2",
+]
+# CI runs on x86-64 Linux, where the PyTorch CPU index publishes wheels as `X.Y.Z+cpu`
+# only. Requiring this environment makes uv skip versions with no installable wheel there,
+# for every resolution (including `--resolution lowest-direct`), without pinning torch.
+required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["checkpoint(name): needs the named pretrained checkpoint (deselect with -m 'not checkpoint')"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+ignore = ["F722"]  # jaxtyping shape strings like "seq dim" aren't Python expressions
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+"benchmarks/**" = ["D"]
