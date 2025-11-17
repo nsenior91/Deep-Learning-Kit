@@ -1,0 +1,23 @@
+"""Verified Equinox ports of pretrained models, numerically matched against Hugging Face."""
+
+from importlib.metadata import version
+
+from eqx_zoo.generation import generate, generate_batch
+from eqx_zoo.layers import Cache
+from eqx_zoo.models.causal_lm import CausalLM, Config, DecoderEmbedder
+from eqx_zoo.models.encoder import Encoder, EncoderConfig
+from eqx_zoo.models.gpt2 import GPT2, GPT2Config
+
+__all__ = [
+    "Cache",
+    "CausalLM",
+    "Config",
+    "DecoderEmbedder",
+    "Encoder",
+    "EncoderConfig",
+    "GPT2",
+    "GPT2Config",
+    "generate",
+    "generate_batch",
+]
+__version__ = version("eqx-zoo")
