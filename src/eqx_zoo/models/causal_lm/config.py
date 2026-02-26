@@ -1,0 +1,234 @@
+"""Model configuration, translated from Hugging Face `config.json` files."""
+
+import dataclasses
+from typing import Any
+
+from eqx_zoo.layers import Llama3RopeScaling
+
+# Attention features implied by each architecture rather than stated in `config.json`.
+_ARCHITECTURES: dict[str, dict[str, Any]] = {
+    "LlamaForCausalLM": {"attention_bias": False, "qk_norm": False},
+    # Mistral: Llama-style attention, plus a sliding window in some checkpoints (see below).
+    "MistralForCausalLM": {"attention_bias": False, "qk_norm": False, "sliding_window": True},
+    "Qwen2ForCausalLM": {"attention_bias": True, "qk_norm": False},
+    "Qwen3ForCausalLM": {"attention_bias": False, "qk_norm": True},
+    # Qwen3.5: hybrid Gated DeltaNet / attention layers. The multimodal checkpoints keep the
+    # language model's settings in `text_config`.
+    "Qwen3_5ForCausalLM": {"attention_bias": False, "qk_norm": True, "hybrid": True},
+    "Qwen3_5ForConditionalGeneration": {"attention_bias": False, "qk_norm": True, "hybrid": True},
+    "Qwen3MoeForCausalLM": {"attention_bias": False, "qk_norm": True},
+}
+
+
+# Decoders saved without a language-model head, as embedding models often are, use their
+# base-model architecture names; they share the settings of the full models.
+_ARCHITECTURES |= {
+    "LlamaModel": _ARCHITECTURES["LlamaForCausalLM"],
+    "Qwen2Model": _ARCHITECTURES["Qwen2ForCausalLM"],
+    "Qwen3Model": _ARCHITECTURES["Qwen3ForCausalLM"],
+}
+
+
+# Checkpoints whose language model is stored under another prefix, next to weights eqx-zoo
+# doesn't use: (our prefix -> checkpoint prefix, checkpoint prefixes to ignore).
+CHECKPOINT_LAYOUTS: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
+    "Qwen3_5ForConditionalGeneration": (
+        {"model.": "model.language_model."},
+        ("model.visual.", "mtp."),  # the vision encoder, and multi-token prediction
+    ),
+}
+
+# The text-only architecture that a multimodal checkpoint's language model is saved as.
+TEXT_ONLY_ARCHITECTURES: dict[str, str] = {
+    "Qwen3_5ForConditionalGeneration": "Qwen3_5ForCausalLM",
+}
+
+
+@dataclasses.dataclass(frozen=True)
+class Config:
+    """Hyperparameters of a decoder-only language model.
+
+    Field names follow Hugging Face conventions. Build one from a checkpoint's
+    `config.json` with `Config.from_hf`.
+
+    Attributes:
+        architecture: Hugging Face architecture name, e.g. `"Qwen3ForCausalLM"`.
+        vocab_size: Number of tokens in the vocabulary.
+        hidden_size: Model (residual stream) dimension.
+        intermediate_size: Inner dimension of each MLP.
+        num_hidden_layers: Number of decoder layers.
+        num_attention_heads: Number of query heads.
+        num_key_value_heads: Number of key/value heads.
+        head_dim: Per-head dimension.
+        rms_norm_eps: Epsilon for every RMSNorm.
+        rope_theta: RoPE base frequency.
+        tie_word_embeddings: Whether the output head reuses the embedding matrix.
+        attention_bias: Whether the query, key and value projections have a bias.
+        qk_norm: Whether each query and key head is RMS-normalised.
+        rope_scaling: RoPE frequency scaling, or None for standard RoPE.
+        num_experts: Number of experts in each mixture-of-experts layer; 0 for dense models.
+        num_experts_per_tok: Number of experts each token is routed to.
+        moe_intermediate_size: Inner dimension of each expert's MLP.
+        norm_topk_prob: Whether the selected experts' routing weights are renormalised to
+            sum to one.
+        moe_layers: Indices of the decoder layers that are mixture-of-experts; the others
+            use a dense MLP.
+        pad_token_id: Id of the padding token, whose embedding is never trained, or `None`.
+        layer_types: Each layer's token mixer, `"linear_attention"` (Gated DeltaNet) or
+            `"full_attention"`, for hybrid models; empty means attention everywhere.
+        linear_num_key_heads: Number of DeltaNet query/key heads.
+        linear_num_value_heads: Number of DeltaNet value heads.
+        linear_key_head_dim: DeltaNet query/key head dimension.
+        linear_value_head_dim: DeltaNet value head dimension.
+        linear_conv_kernel_dim: Length of DeltaNet's causal convolution.
+        rotary_dim: Leading dimensions of each attention head that RoPE rotates, or `None`
+            for all of them.
+        attn_output_gate: Whether attention has a per-head sigmoid output gate.
+        zero_centered_norm: Whether RMSNorms scale by `1 + weight`, as in Qwen3.5.
+        sliding_window: Keys each query may attend to, counting itself, or None for full
+            causal attention.
+    """
+
+    architecture: str
+    vocab_size: int
+    hidden_size: int
+    intermediate_size: int
+    num_hidden_layers: int
+    num_attention_heads: int
+    num_key_value_heads: int
+    head_dim: int
+    rms_norm_eps: float
+    rope_theta: float
+    tie_word_embeddings: bool
+    attention_bias: bool
+    qk_norm: bool
+    rope_scaling: Llama3RopeScaling | None
+    num_experts: int = 0
+    num_experts_per_tok: int = 0
+    moe_intermediate_size: int = 0
+    norm_topk_prob: bool = False
+    moe_layers: tuple[int, ...] = ()
+    pad_token_id: int | None = None
+    layer_types: tuple[str, ...] = ()
+    linear_num_key_heads: int = 0
+    linear_num_value_heads: int = 0
+    linear_key_head_dim: int = 0
+    linear_value_head_dim: int = 0
+    linear_conv_kernel_dim: int = 0
+    rotary_dim: int | None = None
+    attn_output_gate: bool = False
+    zero_centered_norm: bool = False
+    sliding_window: int | None = None
+
+    @classmethod
+    def from_hf(cls, config: dict[str, Any]) -> "Config":
+        """Translate a parsed Hugging Face `config.json`.
+
+        Args:
+            config: The parsed JSON.
+
+        Returns:
+            The corresponding config.
+
+        Raises:
+            ValueError: If the architecture is not supported.
+            NotImplementedError: If the checkpoint needs a feature not implemented yet.
+        """
+        architecture = (config.get("architectures") or ["<missing>"])[0]
+        if architecture not in _ARCHITECTURES:
+            supported = ", ".join(sorted(_ARCHITECTURES))
+            raise ValueError(f"unsupported architecture {architecture!r}; supported: {supported}")
+        features = _ARCHITECTURES[architecture]
+        # Multimodal checkpoints keep the language model's settings in `text_config`.
+        outer, config = config, config.get("text_config", config)
+
+        # RoPE settings live in `rope_scaling` (transformers 4.x) or `rope_parameters` (5.x).
+        rope = config.get("rope_scaling") or config.get("rope_parameters") or {}
+        rope_type = rope.get("rope_type", rope.get("type", "default"))
+        if rope_type == "default":
+            rope_scaling = None
+        elif rope_type == "llama3":
+            rope_scaling = Llama3RopeScaling(
+                factor=rope["factor"],
+                low_freq_factor=rope["low_freq_factor"],
+                high_freq_factor=rope["high_freq_factor"],
+                original_max_position_embeddings=rope["original_max_position_embeddings"],
+            )
+        else:
+            raise NotImplementedError(f"RoPE scaling type {rope_type!r} is not supported yet")
+        if config.get("mlp_bias", False):
+            raise NotImplementedError("MLP bias is not supported yet")
+        if config.get("use_sliding_window", False):
+            raise NotImplementedError("sliding-window attention is not supported yet")
+        # Mistral's window is stored whatever the context length, as Transformers applies it
+        # unconditionally. Mistral-7B v0.3 has none (`None`).
+        sliding_window = config.get("sliding_window") if features.get("sliding_window") else None
+        if config.get("hidden_act", "silu") != "silu":
+            raise NotImplementedError(f"activation {config['hidden_act']!r} is not supported")
+
+        num_heads = config["num_attention_heads"]
+        num_layers = config["num_hidden_layers"]
+        # Saved as `num_experts` by transformers 4.x and `num_local_experts` by 5.x.
+        num_experts = config.get("num_experts") or config.get("num_local_experts", 0)
+        if num_experts:
+            # A layer is mixture-of-experts unless listed in `mlp_only_layers`, and only
+            # every `decoder_sparse_step`-th layer is; as in the Hugging Face implementation.
+            step = config.get("decoder_sparse_step", 1)
+            dense = set(config.get("mlp_only_layers", []))
+            moe_layers = tuple(
+                i for i in range(num_layers) if i not in dense and (i + 1) % step == 0
+            )
+        else:
+            moe_layers = ()
+
+        head_dim = config.get("head_dim") or config["hidden_size"] // num_heads
+        factor = rope.get("partial_rotary_factor", config.get("partial_rotary_factor", 1.0))
+        rotary_dim = None if factor == 1.0 else int(head_dim * factor)
+
+        hybrid: dict[str, Any] = {}
+        if features.get("hybrid"):
+            layer_types = tuple(config["layer_types"])
+            unknown = set(layer_types) - {"linear_attention", "full_attention"}
+            if unknown:
+                raise NotImplementedError(f"layer types {sorted(unknown)} are not supported")
+            if not config.get("attn_output_gate", True):
+                raise NotImplementedError(
+                    "Qwen3.5 attention without an output gate is not supported"
+                )
+            hybrid = dict(
+                layer_types=layer_types,
+                linear_num_key_heads=config["linear_num_key_heads"],
+                linear_num_value_heads=config["linear_num_value_heads"],
+                linear_key_head_dim=config["linear_key_head_dim"],
+                linear_value_head_dim=config["linear_value_head_dim"],
+                linear_conv_kernel_dim=config["linear_conv_kernel_dim"],
+                attn_output_gate=True,
+                zero_centered_norm=True,
+            )
+        return cls(
+            architecture=architecture,
+            vocab_size=config["vocab_size"],
+            hidden_size=config["hidden_size"],
+            intermediate_size=config["intermediate_size"],
+            num_hidden_layers=num_layers,
+            num_attention_heads=num_heads,
+            num_key_value_heads=config.get("num_key_value_heads", num_heads),
+            head_dim=head_dim,
+            rms_norm_eps=config["rms_norm_eps"],
+            rope_theta=config.get("rope_theta", rope.get("rope_theta", 10_000.0)),
+            tie_word_embeddings=config.get(
+                "tie_word_embeddings", outer.get("tie_word_embeddings", False)
+            ),
+            attention_bias=config.get("attention_bias", features["attention_bias"]),
+            qk_norm=features["qk_norm"],
+            rope_scaling=rope_scaling,
+            num_experts=num_experts,
+            num_experts_per_tok=config.get("num_experts_per_tok", 0),
+            moe_intermediate_size=config.get("moe_intermediate_size", 0),
+            norm_topk_prob=config.get("norm_topk_prob", False),
+            moe_layers=moe_layers,
+            pad_token_id=config.get("pad_token_id"),
+            rotary_dim=rotary_dim,
+            sliding_window=sliding_window,
+            **hybrid,
+        )
